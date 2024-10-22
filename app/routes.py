@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Define blueprint
 bp = Blueprint('mpesa', __name__)
-CORS(bp, resources={r"/api/mpesa/payment": {"origins": "http://localhost:5173", "supports_credentials": True}})
+CORS(bp, resources={r"/api/mpesa/payment": {"origins": "https://mydukafrontend-1f5w.onrender.com/", "supports_credentials": True}})
 
 # M-Pesa credentials (use environment variables for security)
 CONSUMER_KEY = os.getenv('CONSUMER_KEY')
