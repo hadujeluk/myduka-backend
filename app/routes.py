@@ -3,12 +3,11 @@ from requests.auth import HTTPBasicAuth
 import requests
 import os
 from datetime import datetime
-import re  # Import regex for phone number validation
 from . import db
 from .models import Payment, Sale, Product
 from flask_cors import CORS
-import base64  # Added for password encoding
-import logging  # Import logging for better debug messages
+import base64
+import logging
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Define blueprint
 bp = Blueprint('mpesa', __name__)
-CORS(bp, resources={r"/api/mpesa/payment": {"origins": "https://mydukafrontend-1f5w.onrender.com/", "supports_credentials": True}})
+CORS(bp)  # Allow all origins for development
 
 # M-Pesa credentials (use environment variables for security)
 CONSUMER_KEY = os.getenv('CONSUMER_KEY')
@@ -36,46 +35,33 @@ def get_access_token():
     logger.error(f"Error fetching M-Pesa access token: {response.status_code}, {response.text}")
     raise Exception("Error fetching M-Pesa access token.")
 
-# Helper function to validate and format phone number
-def format_phone_number(phone_number):
-    """Format and validate the phone number."""
-    logger.debug(f"Formatting phone number: {phone_number}")
-    if phone_number.startswith('07'):
-        return '254' + phone_number[1:]
-    elif phone_number.startswith('254'):
-        return phone_number  # Already in international format
-    else:
-        logger.warning("Invalid phone number format provided.")
-        return None  # Invalid format
-
 # M-Pesa Payment Route
 @bp.route('/api/mpesa/payment', methods=['POST', 'OPTIONS'])
 def mpesa_payment():
     if request.method == 'OPTIONS':
         logger.debug("Handling preflight request.")
-        return jsonify({"success": True}), 200  # Handle the preflight request
+        return jsonify({"success": True}), 200
 
     data = request.get_json()
     logger.debug(f"Received payment data: {data}")
     
     phone_number = data.get('phone')
-    amount = data.get('amount', 1)  # Fetch the amount from the request data
+    amount = data.get('amount', 1)
 
-    # Validate phone number and amount
     if not phone_number or not amount:
         logger.warning("Phone number and amount are required.")
         return jsonify({"success": False, "message": "Phone number and amount are required"}), 400
 
-    formatted_phone_number = format_phone_number(phone_number)
-    if not formatted_phone_number:
-        logger.warning("Invalid phone number format.")
-        return jsonify({"success": False, "message": "Invalid phone number format"}), 400
-
     try:
+        formatted_phone_number = format_phone_number(phone_number)
+        if not formatted_phone_number:
+            logger.warning("Invalid phone number format.")
+            return jsonify({"success": False, "message": "Invalid phone number format"}), 400
+
         access_token = get_access_token()
         url = "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest"
         headers = {"Authorization": f"Bearer {access_token}"}
-        
+
         timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
         password = base64.b64encode(f"{SHORTCODE}{PASSKEY}{timestamp}".encode()).decode('utf-8')
 
@@ -85,15 +71,14 @@ def mpesa_payment():
             "Timestamp": timestamp,
             "TransactionType": "CustomerPayBillOnline",
             "Amount": amount,
-            "PartyA": 254713961197,
+            "PartyA": formatted_phone_number,  # Use formatted number
             "PartyB": SHORTCODE,
-            "PhoneNumber": 254713961197,
+            "PhoneNumber": formatted_phone_number,
             "CallBackURL": CALLBACK_URL,
             "AccountReference": "CompanyXLTD",
             "TransactionDesc": "Payment of X"
         }
 
-        # Log the payload for debugging
         logger.debug(f"Sending payment request with payload: {payload}")
 
         response = requests.post(url, json=payload, headers=headers)
@@ -116,44 +101,54 @@ def mpesa_payment():
 # Product Routes
 @bp.route('/api/products', methods=['GET'])
 def get_products():
-    products = Product.query.all()
-    logger.debug("Fetched products from database.")
-    return jsonify([{
-        'id': p.id,
-        'name': p.name,
-        'description': p.description,
-        'price': p.price,
-        'category': p.category
-    } for p in products]), 200
+    try:
+        products = Product.query.all()
+        logger.debug("Fetched products from database.")
+        return jsonify([{
+            'id': p.id,
+            'name': p.name,
+            'description': p.description,
+            'price': p.price,
+            'category': p.category
+        } for p in products]), 200
+    except Exception as e:
+        logger.exception("Error fetching products")
+        return jsonify({"success": False, "message": "Error fetching products"}), 500
 
 @bp.route('/api/products', methods=['POST'])
 def add_product():
     data = request.get_json()
     logger.debug(f"Adding new product: {data}")
-    new_product = Product(
-        name=data['name'],
-        description=data['description'],
-        price=data['price'],
-        category=data['category']
-    )
-    db.session.add(new_product)
-    db.session.commit()
-    logger.info("New product added successfully!")
-    return jsonify({'message': 'Product added successfully!'}), 201
+    try:
+        new_product = Product(
+            name=data['name'],
+            description=data['description'],
+            price=data['price'],
+            category=data['category']
+        )
+        db.session.add(new_product)
+        db.session.commit()
+        logger.info("New product added successfully!")
+        return jsonify({'message': 'Product added successfully!'}), 201
+    except Exception as e:
+        logger.exception("Error adding product")
+        return jsonify({"success": False, "message": "Error adding product"}), 500
 
 # Sales Routes
 @bp.route('/api/sales', methods=['POST'])
 def add_sale():
     data = request.get_json()
     logger.debug(f"Adding new sale: {data}")
-    new_sale = Sale(
-        product_id=data['product_id'],
-        time=datetime.now(),
-        quantity=data['quantity']
-    )
-    db.session.add(new_sale)
-    db.session.commit()
-    logger.info("New sale recorded.")
-    return jsonify({'message': 'Sale added!'}), 201
-
-
+    try:
+        new_sale = Sale(
+            product_id=data['product_id'],
+            time=datetime.now(),
+            quantity=data['quantity']
+        )
+        db.session.add(new_sale)
+        db.session.commit()
+        logger.info("New sale recorded.")
+        return jsonify({'message': 'Sale added!'}), 201
+    except Exception as e:
+        logger.exception("Error adding sale")
+        return jsonify({"success": False, "message": "Error adding sale"}), 500
